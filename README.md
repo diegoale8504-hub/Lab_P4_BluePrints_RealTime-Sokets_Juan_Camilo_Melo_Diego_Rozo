@@ -212,6 +212,16 @@ Para probar la aplicación en tu máquina local con todas sus capacidades en tie
    ```
    *(El servidor quedará escuchando en el puerto 3001).*
 
+   > ⚠️ **Nota Importante para el Evaluador:** Para que la sincronización en tiempo real de **creación y eliminación** de planos funcione correctamente con Socket.IO, agregamos las siguientes líneas al archivo `server.js` del backend original para que actúe como un canal de broadcast global:
+   > ```javascript
+   > socket.on('new-blueprint', (bp) => {
+   >   socket.broadcast.emit('new-blueprint', bp);
+   > });
+   > socket.on('delete-blueprint', (bp) => {
+   >   socket.broadcast.emit('delete-blueprint', bp);
+   > });
+   > ```
+
 #### 2. Iniciar el Frontend (React + Vite)
 1. Abre una **nueva terminal** y dirígete a la carpeta de este repositorio:
    ```bash
