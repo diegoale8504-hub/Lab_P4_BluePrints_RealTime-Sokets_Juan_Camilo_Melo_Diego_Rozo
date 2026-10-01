@@ -198,21 +198,69 @@ Se ha unificado la funcionalidad completa del **Lab 3 (React UI & CRUD REST)** c
    - Soporte a fallback simulado en memoria para pruebas directas en caso de que el backend REST aún no esté activo localmente.
 
 ### 🛠️ Puesta en Marcha
-1. **Instalar dependencias**:
+Para probar la aplicación en tu máquina local con todas sus capacidades en tiempo real, sigue estos pasos:
+
+#### 1. Iniciar el Backend (Socket.IO Node.js)
+1. Abre una terminal y dirígete a la carpeta del backend:
+   ```bash
+   cd ../example-backend-socketio-node-
+   ```
+2. Instala las dependencias y arranca el servidor:
    ```bash
    npm install
-   ```
-2. **Ejecutar en desarrollo**:
-   ```bash
    npm run dev
    ```
-3. **Construir para producción**:
+   *(El servidor quedará escuchando en el puerto 3001).*
+
+#### 2. Iniciar el Frontend (React + Vite)
+1. Abre una **nueva terminal** y dirígete a la carpeta de este repositorio:
    ```bash
-   npm run build
+   # (Dentro de Lab_P4_BluePrints_RealTime-Sokets_Juan_Camilo_Melo_Diego_Rozo)
+   npm install
+   npm run dev
    ```
+2. Abre tu navegador en `http://localhost:5173/`.
+
+#### 3. Probar la Colaboración Multi-usuario
+1. Abre **dos pestañas** apuntando a `http://localhost:5173/`.
+2. Asegúrate de seleccionar **Socket.IO (Node.js Server)** en el selector superior derecho.
+3. Busca al autor `juan`, selecciona un plano y comienza a dibujar. Verás la sincronización instantánea. Además, prueba a **crear, limpiar o eliminar** planos y verás que las listas se actualizan automáticamente sin recargar la página.
+
+---
+
+### 🎥 Video Demostrativo
+> **[▶️ Ver Video Demostrativo en YouTube](https://youtu.be/9hGpum2w-jM)**
+> En este video mostramos la colaboración en vivo abriendo dos pestañas para dibujar simultáneamente, probar el flujo completo de CRUD y la reactividad multi-cliente sin necesidad de recargar la página.
+
+---
+
+### 🧠 Decisiones de Arquitectura y Análisis
+Como parte de la rúbrica de evaluación, detallamos nuestras decisiones técnicas:
+
+#### 1. Manejo de Salas (Rooms) y Tópicos (Topics)
+* **Socket.IO:** Utilizamos el formato de sala `blueprints.{author}.{name}`. Esto asegura que el `broadcast` (la retransmisión del evento de dibujo) solo se envíe a los clientes que están viendo exactamente ese mismo plano, aislando los eventos y optimizando la red.
+* **STOMP:** Aplicamos un enfoque similar suscribiendo a los clientes al tópico `/topic/blueprints.{author}.{name}` y enviando los puntos hacia el broker en `/app/draw`.
+
+#### 2. Hallazgos (Latencia y Reconexión)
+Durante las pruebas, notamos que la latencia de dibujo es mínima en un entorno local. Para mejorar la **Observabilidad y DX**, implementamos logs específicos en la consola del cliente que informan sobre la conexión y desconexión exitosa, así como la recepción de paquetes en tiempo real. En caso de caída del servidor, ambas tecnologías intentan la reconexión de forma automática, aunque percibimos que Socket.IO gestiona el *fallback* de manera más transparente al inicio.
+
+#### 3. Comparativa: Socket.IO vs STOMP
+| Criterio | Socket.IO (Node.js) | STOMP (Spring Boot) |
+| :--- | :--- | :--- |
+| **Facilidad de Configuración** | Muy alta, usa eventos simples (`emit`, `on`). | Requiere configuración de Brokers en Java, pero es más robusto para mensajería empresarial. |
+| **Escalabilidad** | Buena, apoyada con Redis para múltiples nodos. | Excelente, integrable nativamente con RabbitMQ o ActiveMQ. |
+| **Flexibilidad de Datos** | Los payloads en JS son nativos y directos. | Fuerte tipado (POJOs en Java), ideal para contratos estrictos. |
+| **Conclusión** | Ideal para prototipos rápidos y apps Node full-stack. | Ideal para ecosistemas empresariales basados en Java/Spring. |
+
+#### 4. Retos Técnicos y Soluciones Avanzadas (Race Conditions y UX)
+Durante el desarrollo enfrentamos y solucionamos varios casos borde (bugs) complejos para garantizar una sincronización perfecta:
+- **Sincronización Total del CRUD**: No solo sincronizamos el dibujo, sino también la *creación*, *eliminación* y *limpieza de lienzo*. Utilizamos eventos globales (`new-blueprint` y `delete-blueprint`) para que la lista de planos se actualice instantáneamente en todos los clientes sin necesidad de refrescar la página.
+- **Race Condition al Eliminar/Crear Planos**: Descubrimos un bug sutil en React donde, al eliminar un plano abierto, el estado pasaba a `null`. Esto provocaba que React desmontara la conexión WebSocket *antes* de que el evento de borrado pudiera ser emitido al servidor. Lo solucionamos invirtiendo el orden de las operaciones: emitiendo el evento primero mientras el socket sigue activo y, posteriormente, aplicando los cambios en el estado local.
+- **Auto-cierre y Selección Inteligente**: Si el Usuario A está dibujando en un plano y el Usuario B lo elimina desde otra pantalla, el cliente del Usuario A detecta esto, cierra automáticamente el plano en pantalla y salta al siguiente plano disponible del autor (o limpia la pantalla si era el último).
+- **Auto-selección desde Cero Planos**: Se modificó la arquitectura para que la conexión al WebSocket se mantenga viva de forma global, incluso si un autor tiene 0 planos. Esto permite que si un cliente B le crea un plano, el cliente A reciba el aviso, lo añada a su lista vacía y lo abra automáticamente para empezar a colaborar.
+- **Reutilización de Eventos (Limpiar Puntos)**: Para el botón de "Limpiar Puntos", reutilizamos la infraestructura de dibujo (`draw-event`) enviando un payload con el arreglo de puntos vacío (`points: []`). Esto permitió sincronizar la limpieza de pantalla en milisegundos sin necesidad de crear nuevos *endpoints* o *topics*.
 
 ---
 
 ## 📄 Licencia
 MIT (o la definida por el curso/equipo).
-

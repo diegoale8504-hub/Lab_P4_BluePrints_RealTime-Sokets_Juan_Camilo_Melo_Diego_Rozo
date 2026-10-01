@@ -1,7 +1,7 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8080'
 
 // In-memory mock store for offline/demo resilience if Spring REST backend is not currently running
-const mockStore = {
+const defaultMockStore = {
   juan: [
     { author: 'juan', name: 'plano-1', points: [{ x: 50, y: 50 }, { x: 200, y: 150 }, { x: 350, y: 80 }] },
     { author: 'juan', name: 'plano-2', points: [{ x: 100, y: 100 }, { x: 300, y: 300 }] },
@@ -9,6 +9,15 @@ const mockStore = {
   diego: [
     { author: 'diego', name: 'casa-campo', points: [{ x: 80, y: 120 }, { x: 180, y: 220 }, { x: 280, y: 120 }] },
   ],
+}
+
+const getMockStore = () => {
+  const stored = localStorage.getItem('mockStore')
+  return stored ? JSON.parse(stored) : defaultMockStore
+}
+
+const saveMockStore = (store) => {
+  localStorage.setItem('mockStore', JSON.stringify(store))
 }
 
 export const apiClient = {
@@ -21,8 +30,9 @@ export const apiClient = {
       return Array.isArray(data) ? data : (data.data || [])
     } catch (err) {
       console.warn('REST API unavailable, using local mock data:', err.message)
+      const store = getMockStore()
       const cleanAuthor = author.toLowerCase().trim()
-      return mockStore[cleanAuthor] || [
+      return store[cleanAuthor] || [
         { author: cleanAuthor, name: 'plano-ejemplo', points: [{ x: 60, y: 60 }, { x: 240, y: 180 }] }
       ]
     }
@@ -36,8 +46,9 @@ export const apiClient = {
       return await res.json()
     } catch (err) {
       console.warn('REST API unavailable, loading blueprint from local mock:', err.message)
+      const store = getMockStore()
       const cleanAuthor = author.toLowerCase().trim()
-      const list = mockStore[cleanAuthor] || []
+      const list = store[cleanAuthor] || []
       const found = list.find((b) => b.name === name)
       return found || { author, name, points: [{ x: 50, y: 50 }, { x: 150, y: 150 }] }
     }
@@ -55,9 +66,11 @@ export const apiClient = {
       return await res.json()
     } catch (err) {
       console.warn('REST API unavailable, creating blueprint in local mock:', err.message)
+      const store = getMockStore()
       const cleanAuthor = blueprint.author.toLowerCase().trim()
-      if (!mockStore[cleanAuthor]) mockStore[cleanAuthor] = []
-      mockStore[cleanAuthor].push(blueprint)
+      if (!store[cleanAuthor]) store[cleanAuthor] = []
+      store[cleanAuthor].push(blueprint)
+      saveMockStore(store)
       return blueprint
     }
   },
@@ -74,13 +87,15 @@ export const apiClient = {
       return await res.json()
     } catch (err) {
       console.warn('REST API unavailable, updating blueprint in local mock:', err.message)
+      const store = getMockStore()
       const cleanAuthor = author.toLowerCase().trim()
-      if (mockStore[cleanAuthor]) {
-        const idx = mockStore[cleanAuthor].findIndex((b) => b.name === name)
+      if (store[cleanAuthor]) {
+        const idx = store[cleanAuthor].findIndex((b) => b.name === name)
         if (idx !== -1) {
-          mockStore[cleanAuthor][idx] = blueprintData
+          store[cleanAuthor][idx] = blueprintData
         }
       }
+      saveMockStore(store)
       return blueprintData
     }
   },
@@ -95,10 +110,12 @@ export const apiClient = {
       return true
     } catch (err) {
       console.warn('REST API unavailable, deleting blueprint from local mock:', err.message)
+      const store = getMockStore()
       const cleanAuthor = author.toLowerCase().trim()
-      if (mockStore[cleanAuthor]) {
-        mockStore[cleanAuthor] = mockStore[cleanAuthor].filter((b) => b.name !== name)
+      if (store[cleanAuthor]) {
+        store[cleanAuthor] = store[cleanAuthor].filter((b) => b.name !== name)
       }
+      saveMockStore(store)
       return true
     }
   },

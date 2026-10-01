@@ -10,7 +10,7 @@ const IO_BASE = import.meta.env.VITE_IO_BASE ?? 'http://localhost:3001'
 
 export default function App() {
   // RT & Selection State
-  const [tech, setTech] = useState('stomp') // 'none' | 'stomp' | 'socketio'
+  const [tech, setTech] = useState('socketio') // 'none' | 'stomp' | 'socketio'
   const [connStatus, setConnStatus] = useState('disconnected') // 'connected' | 'connecting' | 'disconnected' | 'none'
   
   // Author & Blueprints REST State
@@ -31,6 +31,16 @@ export default function App() {
   const stompRef = useRef(null)
   const unsubRef = useRef(null)
   const socketRef = useRef(null)
+  const selectedAuthorRef = useRef(selectedAuthor)
+  const currentBpRef = useRef(currentBp)
+
+  useEffect(() => {
+    selectedAuthorRef.current = selectedAuthor
+  }, [selectedAuthor])
+
+  useEffect(() => {
+    currentBpRef.current = currentBp
+  }, [currentBp])
 
   // 1. Fetch Blueprints by Author
   const handleGetBlueprints = async (targetAuthor = authorInput) => {
@@ -98,8 +108,8 @@ export default function App() {
       socketRef.current = null
     }
 
-    if (tech === 'none' || !currentBp) {
-      setConnStatus(tech === 'none' ? 'none' : 'disconnected')
+    if (tech === 'none') {
+      setConnStatus('none')
       return
     }
 
@@ -109,23 +119,64 @@ export default function App() {
       const client = createStompClient(
         API_BASE,
         () => {
+          console.log('✅ STOMP Connected to server');
           setConnStatus('connected')
-          // Subscribe to blueprint topic
-          unsubRef.current = subscribeBlueprint(
-            client,
-            currentBp.author,
-            currentBp.name,
-            (upd) => {
-              console.log('RT STOMP update received:', upd)
-              if (upd.points) {
-                setPoints(upd.points)
-              } else if (upd.point) {
-                setPoints((prev) => [...prev, upd.point])
+          if (currentBp) {
+            // Subscribe to blueprint topic
+            unsubRef.current = subscribeBlueprint(
+              client,
+              currentBp.author,
+              currentBp.name,
+              (upd) => {
+                console.log('RT STOMP update received:', upd)
+                if (upd.points) {
+                  setPoints(upd.points)
+                } else if (upd.point) {
+                  setPoints((prev) => [...prev, upd.point])
+                }
               }
+            )
+          }
+          
+          // Listen for new blueprints globally
+          client.subscribe('/topic/newblueprint', (msg) => {
+            const bp = JSON.parse(msg.body)
+            if (selectedAuthorRef.current === bp.author) {
+              setBlueprints(prev => {
+                if (prev.find(p => p.name === bp.name)) return prev
+                if (prev.length === 0) {
+                  setTimeout(() => handleSelectBlueprint(bp), 0)
+                }
+                return [...prev, bp]
+              })
             }
-          )
+          })
+
+          // Listen for deleted blueprints globally
+          client.subscribe('/topic/deleteblueprint', (msg) => {
+            const bp = JSON.parse(msg.body)
+            if (selectedAuthorRef.current === bp.author) {
+              setBlueprints(prev => {
+                const nextBps = prev.filter(p => p.name !== bp.name)
+                
+                if (currentBpRef.current?.name === bp.name && currentBpRef.current?.author === bp.author) {
+                  setTimeout(() => {
+                    if (nextBps.length > 0) {
+                      handleSelectBlueprint(nextBps[0])
+                    } else {
+                      setCurrentBp(null)
+                      setPoints([])
+                    }
+                  }, 0)
+                }
+                
+                return nextBps
+              })
+            }
+          })
         },
         () => {
+          console.log('❌ STOMP Disconnected from server');
           setConnStatus('disconnected')
         }
       )
@@ -136,12 +187,16 @@ export default function App() {
       socketRef.current = socket
 
       socket.on('connect', () => {
+        console.log('✅ Socket.IO Connected to server');
         setConnStatus('connected')
-        const room = `blueprints.${currentBp.author}.${currentBp.name}`
-        socket.emit('join-room', room)
+        if (currentBp) {
+          const room = `blueprints.${currentBp.author}.${currentBp.name}`
+          socket.emit('join-room', room)
+        }
       })
 
       socket.on('disconnect', () => {
+        console.log('❌ Socket.IO Disconnected from server');
         setConnStatus('disconnected')
       })
 
@@ -151,6 +206,41 @@ export default function App() {
           setPoints(upd.points)
         } else if (upd.point) {
           setPoints((prev) => [...prev, upd.point])
+        }
+      })
+
+      socket.on('new-blueprint', (bp) => {
+        console.log('RT Socket.IO new blueprint received:', bp)
+        if (selectedAuthorRef.current === bp.author) {
+          setBlueprints(prev => {
+            if (prev.find(p => p.name === bp.name)) return prev
+            if (prev.length === 0) {
+              setTimeout(() => handleSelectBlueprint(bp), 0)
+            }
+            return [...prev, bp]
+          })
+        }
+      })
+
+      socket.on('delete-blueprint', (bp) => {
+        console.log('RT Socket.IO delete blueprint received:', bp)
+        if (selectedAuthorRef.current === bp.author) {
+          setBlueprints(prev => {
+            const nextBps = prev.filter(p => p.name !== bp.name)
+            
+            if (currentBpRef.current?.name === bp.name && currentBpRef.current?.author === bp.author) {
+              setTimeout(() => {
+                if (nextBps.length > 0) {
+                  handleSelectBlueprint(nextBps[0])
+                } else {
+                  setCurrentBp(null)
+                  setPoints([])
+                }
+              }, 0)
+            }
+            
+            return nextBps
+          })
         }
       })
     }
@@ -194,6 +284,34 @@ export default function App() {
     }
   }
 
+  // 5.5. Canvas Clear Handler (Clears points & Broadcasts via RT)
+  const handleClearPoints = () => {
+    if (!currentBp) return
+    
+    // Update local state immediately
+    setPoints([])
+
+    // Broadcast Real-Time event
+    if (tech === 'stomp' && stompRef.current?.connected) {
+      stompRef.current.publish({
+        destination: '/app/draw',
+        body: JSON.stringify({
+          author: currentBp.author,
+          name: currentBp.name,
+          points: [],
+        }),
+      })
+    } else if (tech === 'socketio' && socketRef.current?.connected) {
+      const room = `blueprints.${currentBp.author}.${currentBp.name}`
+      socketRef.current.emit('draw-event', {
+        room,
+        author: currentBp.author,
+        name: currentBp.name,
+        points: [],
+      })
+    }
+  }
+
   // 6. REST CRUD - Save / Update Blueprint (PUT)
   const handleSaveBlueprint = async () => {
     if (!currentBp) return
@@ -215,13 +333,23 @@ export default function App() {
     if (!confirm(`¿Estás seguro de eliminar el plano "${target.name}" de ${target.author}?`)) return
 
     try {
+      // Broadcast delete blueprint FIRST before any state changes disconnect the socket
+      if (tech === 'stomp' && stompRef.current?.connected) {
+        stompRef.current.publish({
+          destination: '/app/deleteblueprint',
+          body: JSON.stringify(target)
+        })
+      } else if (tech === 'socketio' && socketRef.current?.connected) {
+        socketRef.current.emit('delete-blueprint', target)
+      }
+
       await apiClient.deleteBlueprint(target.author, target.name)
-      setMessage(`Plano "${target.name}" eliminado correctamente.`)
       if (currentBp?.name === target.name && currentBp?.author === target.author) {
         setCurrentBp(null)
         setPoints([])
       }
-      handleGetBlueprints(selectedAuthor)
+      await handleGetBlueprints(target.author) // Actualizamos usando el autor del plano
+      setMessage(`Plano "${target.name}" eliminado correctamente.`) // Lo mostramos después de refrescar para que no se borre
     } catch (err) {
       console.error('Error deleting blueprint:', err)
       setMessage('Error al eliminar el plano.')
@@ -231,6 +359,16 @@ export default function App() {
   // 8. REST CRUD - Create New Blueprint (POST)
   const handleCreateBlueprint = async (newBpData) => {
     try {
+      // Broadcast new blueprint creation FIRST before any state changes disconnect the socket
+      if (tech === 'stomp' && stompRef.current?.connected) {
+        stompRef.current.publish({
+          destination: '/app/newblueprint',
+          body: JSON.stringify(newBpData)
+        })
+      } else if (tech === 'socketio' && socketRef.current?.connected) {
+        socketRef.current.emit('new-blueprint', newBpData)
+      }
+
       await apiClient.createBlueprint(newBpData)
       setMessage(`Nuevo plano "${newBpData.name}" creado con éxito.`)
       setAuthorInput(newBpData.author)
@@ -422,7 +560,7 @@ export default function App() {
                 </button>
               </div>
 
-              <button className="btn" onClick={() => setPoints([])}>
+              <button className="btn" onClick={handleClearPoints}>
                 Limpiar Puntos
               </button>
             </div>
